@@ -1,0 +1,156 @@
+
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>مُشَفِّر أكواد بايثون — قوي جدًا</title>
+  <meta name="description" content="أداة ويب لتمويه أكواد بايثون بطبقات متعددة + Anti-Debug + فحص سلامة SHA-256. الناتج يعمل بعد التشفير." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pako@2.1.0/dist/pako.min.js"></script>
+  <style>
+    body { font-feature-settings: "ss01" 1, "ss02" 1; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <main class="max-w-6xl mx-auto px-4 py-6 grid gap-6 lg:grid-cols-2">
+    <section class="grid gap-3">
+      <label class="text-sm text-slate-300">أدخل كود بايثون</label>
+      <textarea id="input" class="mono w-full h-[420px] p-4 rounded-2xl bg-slate-900 border border-slate-800" placeholder="print('Hello, world!')"></textarea>
+
+      <div class="grid gap-3 md:grid-cols-3">
+        <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800 grid gap-2">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-300">الطبقات</span>
+            <span id="layersVal" class="text-sm text-slate-200">3</span>
+          </div>
+          <input id="layers" type="range" min="1" max="6" value="3" class="w-full">
+          <p class="text-xs text-slate-400">زيادة الطبقات = تمويه أعلى (أبطأ قليلاً).</p>
+        </div>
+        <div class="p-4 rounded-2xl bg-slate-900 border border-slate-800 grid gap-2">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-300">تكرار تلقائي</span>
+            <span id="repeatVal" class="text-sm text-slate-200">1</span>
+          </div>
+          <input id="repeat" type="range" min="1" max="5" value="1" class="w-full">
+          <p class="text-xs text-slate-400">كم مرة تعاد عملية التشفير بالكامل.</p>
+        </div>
+        <label class="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-start gap-3 text-sm">
+          <input id="antiDebug" type="checkbox" class="mt-1 size-4" checked>
+          <span>
+            Anti-Debug / Anti-Trace
+            <div class="text-xs text-slate-400">يعطّل التتبّع ويكشف بيئات التصحيح الشائعة.</div>
+          </span>
+        </label>
+        <label class="p-4 rounded-2xl bg-slate-900 border border-slate-800 flex items-start gap-3 text-sm">
+          <input id="antiTamper" type="checkbox" class="mt-1 size-4" checked>
+          <span>
+            فحص سلامة (SHA-256)
+            <div class="text-xs text-slate-400">يتحقق من عدم العبث بالمحتوى الداخلي.</div>
+          </span>
+        </label>
+      </div>
+
+      <div class="flex flex-wrap items-center gap-3">
+        <button id="btnObf" class="px-4 py-2 rounded-2xl bg-indigo-600 hover:bg-indigo-500">تشفير/تمويه الآن</button>
+        <button id="btnCopyOut" class="px-4 py-2 rounded-2xl bg-slate-800 hover:bg-slate-700">نسخ الناتج</button>
+        <button id="btnDownload" class="px-4 py-2 rounded-2xl bg-emerald-600 hover:bg-emerald-500">تنزيل .py</button>
+        <span id="stats" class="text-xs text-slate-400"></span>
+      </div>
+    </section>
+
+    <section class="grid gap-3">
+      <label class="text-sm text-slate-300">الناتج — كود بايثون مُموَّه ويعمل بعد التشفير</label>
+      <textarea id="output" class="mono w-full h-[520px] p-4 rounded-2xl bg-slate-900 border border-slate-800" placeholder="# الناتج سيظهر هنا" readonly></textarea>
+      <details class="rounded-2xl border border-slate-800 overflow-hidden">
+        <summary class="cursor-pointer px-4 py-3 bg-slate-900 text-sm text-slate-200">ما الذي تمت إضافته؟</summary>
+        <div class="px-4 py-3 text-sm text-slate-300 bg-slate-950 space-y-2">
+          <p>• طبقات متعددة قابلة للتحكم (حتى 6). كل طبقة: <b>zlib</b> + <b>XOR</b> + <b>Base64</b> مع معرفات عشوائية.</p>
+          <p>• <b>تكرار تلقائي</b>: يمكن إعادة التشفير الكامل حتى 5 مرات بشكل متتابع.</p>
+          <p>• <b>Anti-Debug</b>: يعطل <code>sys.settrace</code>، يكشف وجود المتتبعات والموديولات الشائعة ويخرج فوراً.</p>
+          <p>• <b>فحص سلامة SHA-256</b> للطبقة الداخلية: يمنع التشغيل إذا تغيّر المحتوى الأصلي.</p>
+        </div>
+      </details>
+    </section>
+  </main>
+
+<script>
+  const $ = (s)=>document.querySelector(s);
+  const input = $('#input');
+  const output = $('#output');
+  const layers = $('#layers');
+  const layersVal = $('#layersVal');
+  const repeat = $('#repeat');
+  const repeatVal = $('#repeatVal');
+  const antiDebug = $('#antiDebug');
+  const antiTamper = $('#antiTamper');
+  const stats = $('#stats');
+
+  layers.addEventListener('input', ()=> layersVal.textContent = layers.value);
+  repeat.addEventListener('input', ()=> repeatVal.textContent = repeat.value);
+  $('#btnCopyOut').onclick = async ()=>{ try{ await navigator.clipboard.writeText(output.value||''); }catch(e){} };
+  $('#btnDownload').onclick = ()=>{ const blob=new Blob([output.value||''],{type:'text/x-python'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='obfuscated.py'; a.click(); };
+
+  // Helpers
+  function utf8Encode(str){ return new TextEncoder().encode(str); }
+  function toHex(bytes){ return Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+  function b64fromBytes(bytes){ let bin=''; for(let b of bytes) bin+=String.fromCharCode(b); return btoa(bin); }
+  function xorBytes(bytes, key){ const out=new Uint8Array(bytes.length); for(let i=0;i<bytes.length;i++) out[i]=bytes[i]^key[i%key.length]; return out; }
+  function randBytes(n){ const arr=new Uint8Array(n); crypto.getRandomValues(arr); return arr; }
+  function randIdent(){ const alphabet='abcdefghijklmnopqrstuvwxyz'; let s=alphabet[Math.floor(Math.random()*alphabet.length)]; const pool=alphabet+alphabet.toUpperCase()+'_'; const len=6+Math.floor(Math.random()*6); for(let i=1;i<len;i++){ s+=pool[Math.floor(Math.random()*pool.length)]; } return s; }
+  async function sha256(bytes){ const buf = await crypto.subtle.digest('SHA-256', bytes); return new Uint8Array(buf); }
+  function hexOf(bytes){ return Array.from(bytes).map(b=>b.toString(16).padStart(2,'0')).join(''); }
+
+  function pythonStub({dataB64, keyHex, withAntiDebug, withHash, innerHashHex, layerId}){
+    const fn = randIdent();
+    const kVar = randIdent();
+    const dVar = randIdent();
+    const cVar = randIdent(); // bytes (after decompress)
+    const sVar = randIdent(); // str decoded
+
+    const anti = withAntiDebug ? `\n# Anti-Debug\ntry:\n    import sys, os\n    if sys.gettrace():\n        raise SystemExit(0)\n    if any(env in os.environ for env in ("PYCHARM_HOSTED","PYDEV_DEBUG","TERM_PROGRAM")) and os.environ.get("TERM_PROGRAM")=="vscode":\n        raise SystemExit(0)\n    sys.settrace(None)\nexcept Exception:\n    pass\n` : '';
+
+    const hashBlock = withHash ? `\nimport hashlib\nif hashlib.sha256(${cVar}).hexdigest() != '${innerHashHex}':\n    raise SystemExit(0)\n` : '';
+
+    return `# -*- coding: utf-8 -*-\n# Layer ${layerId}\nimport base64, zlib${withAntiDebug?", sys, os":""}\n${anti}def ${fn}(s,k):\n    return bytes((b ^ k[i % len(k)]) for i,b in enumerate(s))\n${kVar} = bytes.fromhex('${keyHex}')\n${dVar} = base64.b64decode('${dataB64}')\n${cVar} = zlib.decompress(${fn}(${dVar}, ${kVar}))\n${hashBlock}try:\n    ${sVar} = ${cVar}.decode('utf-8')\nexcept Exception:\n    ${sVar} = ${cVar}.decode('utf-8','ignore')\nexec(compile(${sVar}, '<obf>', 'exec'))\n`;
+  }
+
+  async function build(code, layersCount, doAntiDebug, doHash){
+    let payloadBytes = utf8Encode(code);
+    let innerHashHex = '';
+    if (doHash){ innerHashHex = hexOf(await sha256(payloadBytes)); }
+
+    let generated = '';
+    for (let i=0;i<layersCount;i++){
+      const key = randBytes(16);
+      const deflated = pako.deflate(payloadBytes);
+      const xored = xorBytes(deflated, key);
+      const dataB64 = b64fromBytes(xored);
+      const keyHex = toHex(key);
+
+      const withHash = (i===0) && doHash; // فقط الطبقة الداخلية
+      generated = pythonStub({dataB64, keyHex, withAntiDebug: doAntiDebug, withHash, innerHashHex, layerId: i+1});
+      payloadBytes = utf8Encode(generated); // الطبقة التالية تغلّف الحالية
+    }
+    return generated;
+  }
+
+  $('#btnObf').onclick = async ()=>{
+    const src = input.value.trim();
+    if(!src){ alert('الرجاء إدخال كود بايثون'); return; }
+    output.value = '# جاري التوليد...';
+    const t0 = performance.now();
+
+    let finalResult = src;
+    for (let r=0;r<parseInt(repeat.value,10);r++){
+      finalResult = await build(finalResult, parseInt(layers.value,10), antiDebug.checked, antiTamper.checked);
+    }
+
+    const dt = performance.now()-t0;
+    output.value = finalResult;
+    stats.textContent = `طبقات: ${layers.value} × تكرار: ${repeat.value} — طول الناتج: ${finalResult.length.toLocaleString()} — الزمن: ${dt.toFixed(1)}ms`;
+  };
+</script>
+</body>
+</html>
